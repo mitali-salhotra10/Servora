@@ -1,0 +1,24 @@
+{
+  "name": "servora",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trusted Digital Field-Service Platform",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "keywords": [
+    "servora",
+    "field-service",
+    "fire-safety",
+    "offline-first",
+    "pwa"
+  ],
+  "author": "",
+  "license": "ISC"
+}
