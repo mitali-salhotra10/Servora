@@ -1,97 +1,147 @@
+/**
+ * Servora — Pilot Alias & Test Account Seeding Utility
+ *
+ * SAFETY RESTRICTIONS:
+ * - Restricted strictly to development, testing, and staging environments.
+ * - Guarded against production execution (NODE_ENV === 'production').
+ * - Operates ONLY on an explicit allowlist of synthetic pilot accounts.
+ * - Does NOT perform global password updates or modify existing user passwords.
+ * - Does NOT contain hardcoded plain-text passwords or static password hashes.
+ */
+
 require('dotenv').config({ path: './backend/.env' });
 const { PrismaClient, UserRole } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
 
-// Use DIRECT_URL or DATABASE_URL with connection_limit=1
+// 1. Environment Safeguard: Abort immediately in production
+if (process.env.NODE_ENV === 'production') {
+  console.error('❌ [SECURITY ERROR] seed-aliases.js is strictly forbidden in a production environment.');
+  process.exit(1);
+}
+
+// 2. Strict Synthetic Test Account Allowlist
+const SYNTHETIC_TEST_ACCOUNTS = new Set([
+  'facilities@apexcommerce.com',
+  'compliance@metrohealth.org',
+  'ops@vanguardlogistics.com',
+  'manager@redshieldfire.com',
+  'tech.davis@redshieldfire.com',
+  'tech.patel@redshieldfire.com',
+  'manager@guardianfire.com',
+  'tech.miller@guardianfire.com',
+  'admin@servora.app',
+  'sarah.chen@metrofacilities.com',
+  'elena.rostova@fireshield.com',
+  'david.ross@fireshield.com',
+  'admin@servora.com'
+]);
+
+// 3. Resolve password dynamically from environment (never hardcoded in source)
+const seedPassword = process.env.PILOT_SEED_PASSWORD || process.env.TEST_USER_PASSWORD;
+
+function getPasswordHash() {
+  if (!seedPassword) {
+    throw new Error(
+      'PILOT_SEED_PASSWORD or TEST_USER_PASSWORD environment variable must be provided to initialize new test accounts.'
+    );
+  }
+  return bcrypt.hashSync(seedPassword, 10);
+}
+
+// 4. Initialize connection with connection limits
 const connectionString = process.env.DIRECT_URL || process.env.DATABASE_URL;
 const prisma = new PrismaClient({
   datasources: {
     db: {
-      url: connectionString,
-    },
-  },
+      url: connectionString
+    }
+  }
 });
 
 async function main() {
-  const hash = '$2a$10$2wH2efUfzKJA.ESrZho0leEUYrWBZbM/pVu0ClCJO9X0yS7YIynjG'; // Correct bcrypt hash for Password123!
+  console.log('[Safe Seed] Verifying environment and test account boundaries...');
 
-  // Update all users password to Password123!
-  const updated = await prisma.user.updateMany({
-    data: { passwordHash: hash }
-  });
-  console.log('Updated user passwords count:', updated.count);
-
-  // 1. sarah.chen@metrofacilities.com (Customer)
-  const sarah = await prisma.user.upsert({
-    where: { email: 'sarah.chen@metrofacilities.com' },
-    update: { passwordHash: hash, isActive: true },
-    create: {
+  const aliasesToSeed = [
+    {
       email: 'sarah.chen@metrofacilities.com',
-      passwordHash: hash,
       role: UserRole.CUSTOMER,
-      isActive: true,
-      tokenVersion: 1,
-      customerProfile: {
-        create: {
-          companyName: 'Metro Facilities Management',
-          contactPersonName: 'Sarah Chen',
-          taxId: 'US-EIN-12-3456789',
-          billingAddress: '500 Michigan Ave, Chicago, IL 60611'
+      profile: {
+        customerProfile: {
+          create: {
+            companyName: 'Metro Facilities Management',
+            contactPersonName: 'Sarah Chen',
+            taxId: 'US-EIN-12-3456789',
+            billingAddress: '500 Michigan Ave, Chicago, IL 60611'
+          }
         }
       }
-    }
-  });
-  console.log('Upserted Sarah Chen:', sarah.email);
-
-  // 2. elena.rostova@fireshield.com (Technician)
-  const elena = await prisma.user.upsert({
-    where: { email: 'elena.rostova@fireshield.com' },
-    update: { passwordHash: hash, isActive: true },
-    create: {
+    },
+    {
       email: 'elena.rostova@fireshield.com',
-      passwordHash: hash,
       role: UserRole.SERVICE_PROVIDER,
-      isActive: true,
-      tokenVersion: 1,
-      providerProfile: {
-        create: {
-          businessName: 'FireShield Services Ltd',
-          licenseNumber: 'FSC-IL-2024-9988',
-          serviceRadiusKm: 50
+      profile: {
+        providerProfile: {
+          create: {
+            businessName: 'FireShield Services Ltd',
+            licenseNumber: 'FSC-IL-2024-9988',
+            serviceRadiusKm: 50
+          }
         }
       }
-    }
-  });
-  console.log('Upserted Elena Rostova:', elena.email);
-
-  // 3. david.ross@fireshield.com (Service Manager)
-  const david = await prisma.user.upsert({
-    where: { email: 'david.ross@fireshield.com' },
-    update: { passwordHash: hash, isActive: true },
-    create: {
+    },
+    {
       email: 'david.ross@fireshield.com',
-      passwordHash: hash,
       role: UserRole.SERVICE_MANAGER,
-      isActive: true,
-      tokenVersion: 1
-    }
-  });
-  console.log('Upserted David Ross:', david.email);
-
-  // 4. admin@servora.com (Admin)
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@servora.com' },
-    update: { passwordHash: hash, isActive: true },
-    create: {
+      profile: {}
+    },
+    {
       email: 'admin@servora.com',
-      passwordHash: hash,
       role: UserRole.ADMIN,
-      isActive: true,
-      tokenVersion: 1
+      profile: {}
     }
-  });
-  console.log('Upserted Admin:', admin.email);
+  ];
+
+  for (const alias of aliasesToSeed) {
+    // Boundary check: Enforce strict allowlist to prevent touching any real customer
+    if (!SYNTHETIC_TEST_ACCOUNTS.has(alias.email)) {
+      console.warn(`[Safe Seed] Skipped unauthorized email outside allowlist: ${alias.email}`);
+      continue;
+    }
+
+    // Check if user already exists
+    const existing = await prisma.user.findUnique({
+      where: { email: alias.email },
+      select: { id: true, email: true, isActive: true }
+    });
+
+    if (existing) {
+      // Do NOT modify existing password; only ensure active status
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { isActive: true }
+      });
+      console.log(`✓ [Safe Seed] Existing test account verified (passwords unchanged): ${alias.email}`);
+    } else {
+      // Create new test account with dynamically computed hash
+      const passwordHash = getPasswordHash();
+      const created = await prisma.user.create({
+        data: {
+          email: alias.email,
+          passwordHash,
+          role: alias.role,
+          isActive: true,
+          tokenVersion: 1,
+          ...alias.profile
+        }
+      });
+      console.log(`✓ [Safe Seed] New test alias registered: ${created.email}`);
+    }
+  }
 }
 
 main()
-  .catch(console.error)
+  .catch((err) => {
+    console.error('❌ [Safe Seed Error]:', err.message);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());
