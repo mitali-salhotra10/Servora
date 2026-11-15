@@ -1,0 +1,518 @@
+// Servora Prisma Schema
+// Mapped 1-to-1 with docs/database/data-model.md and docs/security/security-requirements.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserRole {
+  CUSTOMER
+  SERVICE_PROVIDER
+  SERVICE_MANAGER
+  ADMIN
+}
+
+enum ProviderVerificationStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  SUSPENDED
+}
+
+enum DomainCategory {
+  FIRE_EXTINGUISHER
+  FIRE_HYDRANT
+  FIRE_ALARM
+  GENERAL_SAFETY
+}
+
+enum ServiceRequestStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContractFrequency {
+  MONTHLY
+  QUARTERLY
+  BI_ANNUAL
+  ANNUAL
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  TERMINATED
+}
+
+enum EquipmentType {
+  FIRE_EXTINGUISHER
+  FIRE_HYDRANT
+  FIRE_ALARM_PANEL
+  DETECTOR_SENSOR
+}
+
+enum EquipmentStatus {
+  OPERATIONAL
+  NEEDS_MAINTENANCE
+  DECOMMISSIONED
+}
+
+enum VisitStatus {
+  PLANNED
+  ASSIGNED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+enum VisitType {
+  RECURRING_MAINTENANCE
+  EMERGENCY_INSPECTION
+  REPAIR_REFILL
+}
+
+enum AttachmentType {
+  PHOTO_BEFORE
+  PHOTO_AFTER
+  PRESSURE_GAUGE
+  SIGNATURE_IMAGE
+  DEFECT_PROOF
+}
+
+enum CertificateStatus {
+  VALID
+  EXPIRED
+  REVOKED
+}
+
+enum NotificationChannel {
+  IN_APP
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  READ
+}
+
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAIL
+  VISIT_CHECKIN
+  VISIT_COMPLETE
+  CERTIFICATE_ISSUED
+  CONTRACT_STATUS_CHANGE
+  ROLE_UPDATE
+  SYNC_EVENT
+}
+
+// ==========================================
+// CORE ENTITIES (17 Entities)
+// ==========================================
+
+/// 1. Central identity and credentials
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  phone        String?
+  role         UserRole  @default(CUSTOMER)
+  tokenVersion Int       @default(1)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  customerProfile  CustomerProfile?
+  providerProfile  ProviderProfile?
+  assignedVisits   VisitSchedule[]   @relation("AssignedTechnicianVisits")
+  executedVisits   VisitRecord[]
+  auditEvents      AuditEvent[]
+  notifications    NotificationLog[]
+  technicianScores TechnicianScore[]
+
+  @@index([email])
+  @@index([role])
+}
+
+/// 2. Customer profile (business entity or residential client)
+model CustomerProfile {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName       String?
+  contactPersonName String
+  taxId             String?
+  billingAddress    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  sites           Site[]
+  serviceRequests ServiceRequest[]
+  contracts       Contract[]
+  certificates    Certificate[]
+
+  @@index([userId])
+}
+
+/// 3. Service provider profile (independent tech or small contractor)
+model ProviderProfile {
+  id                   String                     @id @default(uuid())
+  userId               String                     @unique
+  user                 User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName         String
+  licenseNumber        String
+  verificationStatus   ProviderVerificationStatus @default(PENDING_VERIFICATION)
+  serviceRadiusKm      Int                        @default(25)
+  baseLatitude         Decimal?                   @db.Decimal(10, 7)
+  baseLongitude        Decimal?                   @db.Decimal(10, 7)
+  averageRating        Decimal                    @default(0.0) @db.Decimal(3, 2)
+  totalCompletedVisits Int                        @default(0)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  services        Service[]
+  contracts       Contract[]
+  serviceRequests ServiceRequest[]
+  certificates    Certificate[]
+
+  @@index([userId])
+  @@index([verificationStatus])
+}
+
+/// 4. Standardized service catalog offering
+model Service {
+  id                       String         @id @default(uuid())
+  providerId               String
+  provider                 ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  name                     String
+  domainCategory           DomainCategory
+  description              String         @db.Text
+  basePrice                Decimal?       @db.Decimal(10, 2)
+  estimatedDurationMinutes Int            @default(60)
+  isActive                 Boolean        @default(true)
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+
+  serviceRequests    ServiceRequest[]
+  checklistTemplates ChecklistTemplate[]
+
+  @@index([providerId])
+  @@index([domainCategory])
+}
+
+/// 5. Ad-hoc service request booking
+model ServiceRequest {
+  id                String               @id @default(uuid())
+  customerId        String
+  customer          CustomerProfile      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  providerId        String?
+  provider          ProviderProfile?     @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  siteId            String
+  site              Site                 @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  serviceId         String
+  service           Service              @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  status            ServiceRequestStatus @default(SUBMITTED)
+  preferredDate     DateTime
+  preferredTimeSlot String
+  customerNotes     String?              @db.Text
+  rejectionReason   String?              @db.Text
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  visitSchedule VisitSchedule?
+
+  @@index([customerId])
+  @@index([providerId])
+  @@index([siteId])
+  @@index([status])
+}
+
+/// 6. Physical site or property where assets reside
+model Site {
+  id                   String          @id @default(uuid())
+  customerId           String
+  customer             CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  siteName             String
+  address              String          @db.Text
+  city                 String
+  postalCode           String
+  latitude             Decimal         @db.Decimal(10, 7)
+  longitude            Decimal         @db.Decimal(10, 7)
+  geofenceRadiusMeters Int             @default(100)
+  onSiteContactName    String
+  onSiteContactPhone   String
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  equipment       Equipment[]
+  visitSchedules  VisitSchedule[]
+  contracts       Contract[]
+  serviceRequests ServiceRequest[]
+  certificates    Certificate[]
+
+  @@index([customerId])
+}
+
+/// 7. Recurring maintenance agreement (AMC / QMC)
+model Contract {
+  id              String            @id @default(uuid())
+  contractNumber  String            @unique
+  customerId      String
+  customer        CustomerProfile   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  providerId      String
+  provider        ProviderProfile   @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  siteId          String
+  site            Site              @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  frequency       ContractFrequency @default(ANNUAL)
+  startDate       DateTime
+  endDate         DateTime
+  gracePeriodDays Int               @default(7)
+  status          ContractStatus    @default(DRAFT)
+  termsSummary    String?           @db.Text
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  equipment      Equipment[]     @relation("ContractEquipment")
+  visitSchedules VisitSchedule[]
+
+  @@index([customerId])
+  @@index([providerId])
+  @@index([siteId])
+  @@index([status])
+}
+
+/// 8. Individual fire-safety asset tracked under compliance
+model Equipment {
+  id                  String          @id @default(uuid())
+  siteId              String
+  site                Site            @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  serialNumber        String
+  qrCodeIdentifier    String          @unique
+  equipmentType       EquipmentType
+  specification       String
+  locationInSite      String
+  manufacturingDate   DateTime?
+  lastInspectionDate  DateTime?
+  nextInspectionDueDate DateTime?
+  status              EquipmentStatus @default(OPERATIONAL)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  contracts          Contract[]          @relation("ContractEquipment")
+  checklistResponses ChecklistResponse[]
+  attachments        Attachment[]
+
+  @@index([siteId])
+  @@index([qrCodeIdentifier])
+  @@index([equipmentType])
+}
+
+/// 9. Scheduled or dispatched inspection slot
+model VisitSchedule {
+  id                   String         @id @default(uuid())
+  contractId           String?
+  contract             Contract?      @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  serviceRequestId     String?        @unique
+  serviceRequest       ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: SetNull)
+  siteId               String
+  site                 Site           @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  assignedTechnicianId String?
+  assignedTechnician   User?          @relation("AssignedTechnicianVisits", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+  targetDate           DateTime
+  dueDate              DateTime
+  status               VisitStatus    @default(PLANNED)
+  visitType            VisitType      @default(RECURRING_MAINTENANCE)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  visitRecord VisitRecord?
+
+  @@index([siteId])
+  @@index([assignedTechnicianId])
+  @@index([status])
+  @@index([targetDate])
+}
+
+/// 10. Immutable proof of execution for a visit
+model VisitRecord {
+  id                    String    @id @default(uuid())
+  visitScheduleId       String    @unique
+  visitSchedule         VisitSchedule @relation(fields: [visitScheduleId], references: [id], onDelete: Restrict)
+  idempotencyKey        String    @unique
+  technicianId          String
+  technician            User      @relation(fields: [technicianId], references: [id], onDelete: Restrict)
+  checkInTimestamp      DateTime
+  checkInLatitude       Decimal   @db.Decimal(10, 7)
+  checkInLongitude      Decimal   @db.Decimal(10, 7)
+  checkInAccuracyMeters Decimal?  @db.Decimal(8, 2)
+  isGeofenceVerified    Boolean   @default(false)
+  geofenceOverrideReason String?  @db.Text
+  checkOutTimestamp     DateTime?
+  customerSignerName    String?
+  customerSignatureData String?   @db.Text
+  technicianNotes       String?   @db.Text
+  recordHash            String    // Canonical SHA-256 seal
+  syncTimestamp         DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+
+  checklistResponses ChecklistResponse[]
+  attachments        Attachment[]
+  certificate        Certificate?
+
+  @@index([technicianId])
+  @@index([idempotencyKey])
+}
+
+/// 11. Standardized checklist template per domain category
+model ChecklistTemplate {
+  id             String         @id @default(uuid())
+  serviceId      String?
+  service        Service?       @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  domainCategory DomainCategory
+  version        Int            @default(1)
+  title          String
+  itemsJson      Json           // Array of inspection items and green-zone thresholds
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  checklistResponses ChecklistResponse[]
+
+  @@index([domainCategory])
+  @@index([isActive])
+}
+
+/// 12. Checklist results per inspected equipment during a visit
+model ChecklistResponse {
+  id               String            @id @default(uuid())
+  visitRecordId    String
+  visitRecord      VisitRecord       @relation(fields: [visitRecordId], references: [id], onDelete: Cascade)
+  equipmentId      String
+  equipment        Equipment         @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  templateId       String
+  template         ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  responsesJson    Json              // Map of question code -> result/value
+  passedInspection Boolean
+  defectNotes      String?           @db.Text
+  createdAt        DateTime          @default(now())
+
+  @@index([visitRecordId])
+  @@index([equipmentId])
+}
+
+/// 13. Photo and signature evidence attached to visit
+model Attachment {
+  id            String         @id @default(uuid())
+  visitRecordId String
+  visitRecord   VisitRecord    @relation(fields: [visitRecordId], references: [id], onDelete: Cascade)
+  equipmentId   String?
+  equipment     Equipment?     @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  fileType      AttachmentType
+  fileUri       String
+  fileHash      String         // SHA-256 of binary content
+  mimeType      String
+  fileSizeBytes Int
+  capturedAt    DateTime       @default(now())
+
+  @@index([visitRecordId])
+  @@index([equipmentId])
+}
+
+/// 14. Compliance certificate generated upon visit verification
+model Certificate {
+  id                String            @id @default(uuid())
+  certificateNumber String            @unique
+  visitRecordId     String            @unique
+  visitRecord       VisitRecord       @relation(fields: [visitRecordId], references: [id], onDelete: Restrict)
+  siteId            String
+  site              Site              @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  customerId        String
+  customer          CustomerProfile   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  providerId        String
+  provider          ProviderProfile   @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  issuedDate        DateTime
+  expirationDate    DateTime
+  status            CertificateStatus @default(VALID)
+  pdfStorageUri     String?
+  qrVerificationUrl String
+  verificationHash  String            // SHA-256 seal
+  createdAt         DateTime          @default(now())
+
+  @@index([certificateNumber])
+  @@index([siteId])
+  @@index([customerId])
+  @@index([providerId])
+}
+
+/// 15. Notification and alert log
+model NotificationLog {
+  id              String              @id @default(uuid())
+  recipientUserId String
+  recipientUser   User                @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+  channel         NotificationChannel
+  title           String
+  body            String              @db.Text
+  status          NotificationStatus  @default(QUEUED)
+  actionUrl       String?
+  createdAt       DateTime            @default(now())
+  readAt          DateTime?
+
+  @@index([recipientUserId])
+  @@index([status])
+}
+
+/// 16. Aggregate technician evaluation score
+model TechnicianScore {
+  id                         String   @id @default(uuid())
+  technicianId               String
+  technician                 User     @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+  evaluationPeriod           String   // e.g. "2026-Q3"
+  totalAssigned              Int      @default(0)
+  totalCompleted             Int      @default(0)
+  onTimeRatePercent          Decimal  @default(0.0) @db.Decimal(5, 2)
+  checklistAccuracyPercent   Decimal  @default(0.0) @db.Decimal(5, 2)
+  customerSatisfactionScore  Decimal  @default(0.0) @db.Decimal(3, 2)
+  computedAt                 DateTime @default(now())
+
+  @@index([technicianId])
+}
+
+/// 17. Append-only immutable audit trail
+model AuditEvent {
+  id                String      @id @default(uuid())
+  userId            String?
+  user              User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action            AuditAction
+  entityType        String
+  entityId          String
+  ipAddress         String
+  userAgent         String
+  payloadBeforeJson Json?
+  payloadAfterJson  Json?
+  timestamp         DateTime    @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([timestamp])
+}

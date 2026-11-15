@@ -2,23 +2,48 @@
   "name": "servora",
   "version": "0.1.0",
   "private": true,
-  "description": "Trusted Digital Field-Service Platform",
+  "description": "Servora — Trusted B2B Fire-Safety Maintenance & Compliance Management Platform",
   "workspaces": [
-    "client",
-    "server"
+    "frontend",
+    "backend",
+    "shared"
   ],
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
     "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "test": "npm run test --workspaces --if-present",
+    "test:frontend": "npm run test --workspace=frontend",
+    "test:backend": "npm run test --workspace=backend",
+    "test:unit": "npm run test:unit --workspace=backend",
+    "test:integration": "npm run test:integration --workspace=backend",
+    "test:e2e": "node tests/e2e/phase3_workflow.e2e.js && node tests/e2e/phase4_field_ops.e2e.js && node tests/e2e/phase5_security.e2e.js",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck:frontend": "npm run typecheck --workspace=frontend",
+    "typecheck:backend": "npm run typecheck --workspace=backend",
+    "lint": "npm run lint --workspace=backend",
+    "prisma:generate": "npm run prisma:generate --workspace=backend",
+    "prisma:validate": "npm run prisma:validate --workspace=backend",
+    "client:dev": "npm run dev:frontend",
+    "client:build": "npm run build:frontend",
+    "client:test": "npm run test:frontend",
+    "server:dev": "npm run dev:backend",
+    "server:build": "npm run build:backend",
+    "server:test": "npm run test:backend"
   },
   "keywords": [
     "servora",
-    "field-service",
     "fire-safety",
+    "life-safety",
+    "compliance",
+    "field-service",
     "offline-first",
+    "dexie",
     "pwa"
   ],
-  "author": "",
-  "license": "ISC"
+  "author": "Servora Engineering Team",
+  "license": "UNLICENSED"
 }

@@ -58,5 +58,8 @@ Thumbs.db
 # Temporary / Cache files
 tmp/
 temp/
+uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
 .eslintcache
 .cache/
