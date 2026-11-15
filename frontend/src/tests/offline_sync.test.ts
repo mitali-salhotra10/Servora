@@ -111,4 +111,75 @@ describe('Offline Synchronization & Idempotency Queue (MOD-08 & MOD-10)', () => 
     expect(queueItems[0].idempotencyKey).toBe('persistent-uuid-456');
     expect(queueItems[0].error).toContain('Network gateway timeout');
   });
+
+  it('SYNC03: retries an already processed submission and marks status as SYNCED on idempotent server response', async () => {
+    // Simulate server returning existing sealed record for an already processed idempotent submission
+    vi.mocked(visitsApi.submitInspection).mockResolvedValueOnce({
+      id: 'existing-sealed-record-789',
+      idempotencyKey: 'retry-key-789',
+      recordHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      message: 'Inspection submission already processed (idempotent response)'
+    });
+
+    const payload = {
+      idempotencyKey: 'retry-key-789',
+      checkInLatitude: 29.76,
+      checkInLongitude: -95.36,
+      checklistResponses: []
+    };
+
+    await db.syncQueue.add({
+      idempotencyKey: 'retry-key-789',
+      visitId: 'visit-already-processed',
+      payload,
+      status: 'PENDING',
+      retryCount: 1,
+      createdAt: new Date().toISOString()
+    });
+
+    const result = await syncManager.syncQueueNow();
+
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(0);
+
+    const queueItems = await db.syncQueue.toArray();
+    const item = queueItems.find((q) => q.idempotencyKey === 'retry-key-789');
+    expect(item).toBeDefined();
+    expect(item?.status).toBe('SYNCED');
+  });
+
+  it('SYNC04: persists checklist draft to IndexedDB and recovers draft upon browser refresh / reload', async () => {
+    const draftKey = 'visit-101_eq-ext-202';
+    const draftPayload = {
+      id: draftKey,
+      visitId: 'visit-101',
+      equipmentId: 'eq-ext-202',
+      equipmentType: 'FIRE_EXTINGUISHER',
+      responsesJson: {
+        'FE-01': true,
+        'FE-02': 150,
+        'FE-03': true,
+        'FE-04': true
+      },
+      passedInspection: true,
+      defectNotes: 'Draft pressure gauge verified in green zone',
+      photoEvidenceUri: '/uploads/draft-photo-101.png',
+      photoEvidenceType: 'image/png',
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save draft into IndexedDB (simulating field work before browser closure)
+    await db.checklistDrafts.put(draftPayload);
+
+    // Simulate browser reload by querying IndexedDB for the visit
+    const restoredDrafts = await db.checklistDrafts.where('visitId').equals('visit-101').toArray();
+
+    expect(restoredDrafts).toHaveLength(1);
+    const restored = restoredDrafts[0];
+    expect(restored.equipmentId).toBe('eq-ext-202');
+    expect(restored.responsesJson['FE-02']).toBe(150);
+    expect(restored.defectNotes).toBe('Draft pressure gauge verified in green zone');
+    expect(restored.photoEvidenceUri).toBe('/uploads/draft-photo-101.png');
+    expect(restored.passedInspection).toBe(true);
+  });
 });
